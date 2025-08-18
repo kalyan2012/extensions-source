@@ -2,118 +2,115 @@ package eu.kanade.tachiyomi.multisrc.kemono
 
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import keiyoushi.utils.tryParse
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.double
 import java.text.SimpleDateFormat
 import java.util.Locale
 
 @Serializable
-class KemonoFavoritesDto(
-    val id: String,
-    val name: String,
-    val service: String,
-    val faved_seq: Long,
+data class KemonoFileDto(
+    val name: String? = null,
+    val path: String? = null,
 )
 
 @Serializable
-class KemonoCreatorDto(
-    val id: String,
-    val name: String,
-    val service: String,
-    private val updated: JsonPrimitive,
-    val favorited: Int = -1,
-) {
-    var fav: Long = 0
-    val updatedDate get() = when {
-        updated.isString -> dateFormat.tryParse(updated.content)
-        else -> (updated.double * 1000).toLong()
-    }
-
-    fun toSManga(imgCdnUrl: String) = SManga.create().apply {
-        url = "/$service/user/$id" // should be /server/ for Discord but will be filtered anyway
-        title = name
-        author = service.serviceName()
-        thumbnail_url = "$imgCdnUrl/icons/$service/$id"
-        description = Kemono.PROMPT
-        initialized = true
-    }
-
-    companion object {
-        private val dateFormat by lazy { getApiDateFormat() }
-
-        fun String.serviceName() = when (this) {
-            "fanbox" -> "Pixiv Fanbox"
-            "subscribestar" -> "SubscribeStar"
-            "dlsite" -> "DLsite"
-            "onlyfans" -> "OnlyFans"
-            else -> replaceFirstChar { it.uppercase() }
-        }
-    }
-}
-
-@Serializable
-class KemonoPostDtoWrapped(
-    val post: KemonoPostDto,
+data class KemonoAttachmentDto(
+    val name: String? = null,
+    val path: String? = null,
+    val server: String? = null,
+    val type: String? = null,
+    val extension: String? = null,
 )
 
 @Serializable
-class KemonoPostDto(
-    private val id: String,
-    private val service: String,
-    private val user: String,
-    private val title: String,
-    private val added: String?,
-    private val published: String?,
-    private val edited: String?,
-    private val file: KemonoFileDto,
-    private val attachments: List<KemonoAttachmentDto>,
+data class KemonoPostDto(
+    val id: String,
+    val user: String,
+    val service: String,
+    val title: String? = null,
+    @SerialName("content") val content: String? = null,
+    val published: String? = null,
+    val file: KemonoFileDto? = null,
+    val attachments: List<KemonoAttachmentDto> = emptyList(),
+    @SerialName("fav_count") val favCount: Int? = null,
 ) {
     val images: List<String>
-        get() = buildList(attachments.size + 1) {
-            if (file.path != null) add(KemonoAttachmentDto(file.name, file.path))
-            addAll(attachments)
-        }.filter {
-            when (it.path.substringAfterLast('.').lowercase()) {
-                "png", "jpg", "gif", "jpeg", "webp" -> true
-                else -> false
-            }
-        }.distinctBy { it.path }.map { it.toString() }
-
-    fun toSChapter() = SChapter.create().apply {
-        val postDate = dateFormat.tryParse(edited ?: published ?: added)
-
-        url = "/$service/user/$user/post/$id"
-        date_upload = postDate
-        name = title.ifBlank {
-            val postDateString = when {
-                postDate != 0L -> chapterNameDateFormat.format(postDate)
-                else -> "unknown date"
-            }
-
-            "Post from $postDateString"
+        get() {
+            val list = mutableListOf<String>()
+            file?.path?.let { list.add(it) }
+            attachments.forEach { att -> att.path?.let { list.add(it) } }
+            return list
         }
-        chapter_number = -2f
+
+    fun toSManga(imgCdnUrl: String): SManga {
+        val manga = SManga.create().apply {
+            title = this@KemonoPostDto.title ?: "Untitled"
+            url = "/$service/user/$user/post/$id"
+            thumbnail_url = when {
+                file?.path != null -> "$imgCdnUrl/thumbnail/data${file.path}"
+                attachments.isNotEmpty() -> "$imgCdnUrl/thumbnail/data${attachments[0].path}"
+                else -> null
+            }
+            description = buildString {
+                if (!content.isNullOrBlank()) appendLine(content)
+                if (favCount != null) appendLine("❤️ Favorites: $favCount")
+                if (!published.isNullOrBlank()) appendLine("📅 Published: $published")
+            }.trim()
+        }
+        return manga
     }
 
-    companion object {
-        val dateFormat by lazy { getApiDateFormat() }
-        val chapterNameDateFormat by lazy { getChapterNameDateFormat() }
+    fun toSChapter(): SChapter {
+        val chapter = SChapter.create()
+        chapter.name = title ?: "Post $id"
+        chapter.url = "/$service/user/$user/post/$id"
+        chapter.date_upload = published.toDateMillis()
+        return chapter
     }
 }
 
 @Serializable
-class KemonoFileDto(val name: String? = null, val path: String? = null)
-
-// name might have ".jpe" extension for JPEG, path might have ".m4v" extension for MP4
-@Serializable
-class KemonoAttachmentDto(var name: String? = null, val path: String) {
-    override fun toString() = path + if (name != null) "?f=$name" else ""
+data class PostsDto(
+    val posts: List<KemonoPostDto> = emptyList(),
+    val props: PropsDto? = null,
+) {
+    fun retrievePosts(): List<KemonoPostDto> = posts
+    fun getCount(): Int = props?.count ?: posts.size
 }
 
-private fun getApiDateFormat() =
-    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ENGLISH)
+@Serializable
+data class PopularDto(
+    val posts: List<KemonoPostDto> = emptyList(),
+    val props: PropsDto? = null,
+) {
+    fun retrievePosts(): List<KemonoPostDto> = posts
+    fun getCount(): Int = props?.count ?: posts.size
+}
 
-private fun getChapterNameDateFormat() =
-    SimpleDateFormat("yyyy-MM-dd 'at' HH:mm:ss", Locale.ENGLISH)
+@Serializable
+data class PostDto(
+    val post: KemonoPostDto,
+    val attachments: List<KemonoAttachmentDto> = emptyList(),
+    val previews: List<KemonoAttachmentDto> = emptyList(),
+    val videos: List<KemonoAttachmentDto> = emptyList(),
+) {
+    fun getCurrentPost(): KemonoPostDto = post
+}
+
+@Serializable
+data class PropsDto(
+    val count: Int? = null,
+)
+
+/**
+ * Helper extension to parse ISO date strings (e.g. "2025-08-18T00:00:00").
+ */
+private fun String?.toDateMillis(): Long {
+    if (this.isNullOrBlank()) return 0L
+    return try {
+        val df = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        df.parse(this)?.time ?: 0L
+    } catch (_: Exception) {
+        0L
+    }
+}

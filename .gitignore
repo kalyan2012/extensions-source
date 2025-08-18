@@ -12,3 +12,13 @@ gen
 generated-src/
 .kotlin
 *.jks
+
+
+# Ignore all multisrcs except kemono
+/lib-multisrc/*
+!/lib-multisrc/kemono/
+
+# Ignore all extensions except rkemono and hentaidad
+/src/all/*
+!/src/all/rkemono/
+!/src/all/hentaidad/
